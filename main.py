@@ -3,6 +3,7 @@
 # ==============================================================================================
 from datetime import datetime
 from loguru import logger
+import joblib
 
 import numpy as np
 import pandas as pd
@@ -22,7 +23,7 @@ plt.style.use("fivethirtyeight")
 # ==============================================================================================
 # beg: config
 # ==============================================================================================
-STOCK_NAME = 'KIRK'
+STOCK_NAME = 'EFX'#'KIRK'
 YEARS = 20
 END_DATE = datetime.now()
 BEG_DATE = datetime(END_DATE.year - YEARS, END_DATE.month, END_DATE.day)
@@ -31,7 +32,7 @@ WIN_SIZE = 64
 TRAIN_TEST_RAT = 0.7
 
 EPOCHS = 5
-BATCH_SIZE = 1
+BATCH_SIZE = 512#1
 # ==============================================================================================
 # end: config
 # ==============================================================================================
@@ -42,8 +43,9 @@ BATCH_SIZE = 1
 # ==============================================================================================
 scaler = MinMaxScaler(feature_range=(0,1))
 
-def get_stock(stock, beg, end, write=False):
+def get_stock(stock, beg, end, write=False, load=False):
     """ return df from yfinance """
+    if load ==True: return pd.read_csv(f'./{stock}.csv')
 
     ret_df = DataReader(stock, 'yahoo', beg, end)
     if write: ret_df.to_csv(f'./{stock}.csv')
@@ -72,7 +74,13 @@ def pre_proc(df):
     return xs, ys
 
 
-data = get_stock(stock=STOCK_NAME, beg=BEG_DATE, end=END_DATE, write=True)
+data = get_stock(
+    stock=STOCK_NAME, 
+    beg=BEG_DATE, 
+    end=END_DATE,
+    load=False, 
+    write=False)
+
 xs, ys = pre_proc(df=data)
 
 split_idx = int(TRAIN_TEST_RAT*len(xs))
@@ -86,6 +94,12 @@ x_hdout, y_hdout = xs[split_idx+test_size//2:], ys[split_idx+test_size//2:]
 x_train = np.expand_dims(x_train, 2)
 x_valid = np.expand_dims(x_valid, 2)
 x_hdout = np.expand_dims(x_hdout, 2)
+
+#print(x_hdout.shape)
+#print(x_train.shape)
+#exit()
+
+joblib.dump(scaler, f'{STOCK_NAME}_scaler.bin')
 # ==============================================================================================
 # end: data preparation
 # ==============================================================================================
@@ -94,35 +108,37 @@ x_hdout = np.expand_dims(x_hdout, 2)
 # ==============================================================================================
 # beg: tf modelling (un-comment to run with tensorflow)
 # ==============================================================================================
-# from keras.models import Sequential
-# from keras.layers import Dense, LSTM
+from keras.models import Sequential
+from keras.layers import Dense, LSTM
 
-# #Build the LSTM model
-# model = Sequential()
-# model.add(LSTM(128, return_sequences=True, input_shape= (x_train.shape[1], 1)))
-# model.add(LSTM(64, return_sequences=False))
-# model.add(Dense(25))
-# model.add(Dense(1))
+#Build the LSTM model
+model = Sequential()
+model.add(LSTM(128, return_sequences=True, input_shape= (x_train.shape[1], 1)))
+model.add(LSTM(64, return_sequences=False))
+model.add(Dense(25))
+model.add(Dense(1))
 
-# # Compile the model
-# model.compile(optimizer='adam', loss='mean_squared_error')
+# Compile the model
+model.compile(optimizer='adam', loss='mean_squared_error')
 
-# #Train the model
-# model.fit(
-#     x_train, y_train, 
-#     validation_data=(x_valid, y_valid),
-#     batch_size=BATCH_SIZE, 
-#     epochs=EPOCHS,
-# )
+#Train the model
+model.fit(
+    x_train, y_train, 
+    validation_data=(x_valid, y_valid),
+    batch_size=BATCH_SIZE, 
+    epochs=EPOCHS,
+)
 
-# # eval on unseen
-# predictions = model.predict(x_hdout)
-# predictions = scaler.inverse_transform(predictions)
+# eval on unseen
+predictions = model.predict(x_hdout)
+predictions = scaler.inverse_transform(predictions)
 
-# rmse = np.sqrt(np.mean(((predictions.flatten() - y_hdout.flatten()) ** 2)))
-# logger.success('='*80)
-# logger.success(f'[EVAL] RMSE = {rmse}')
-# logger.success('='*80)
+rmse = np.sqrt(np.mean(((predictions.flatten() - y_hdout.flatten()) ** 2)))
+logger.success('='*80)
+logger.success(f'[EVAL] RMSE = {rmse}')
+logger.success('='*80)
+
+model.save(f'./{STOCK_NAME}.h5')
 # ==============================================================================================
 # end: tf modelling
 # ==============================================================================================
@@ -131,6 +147,7 @@ x_hdout = np.expand_dims(x_hdout, 2)
 # ==============================================================================================
 # beg: pytorch modelling (uncomment to run with pytorch)
 # ==============================================================================================
+"""
 from seq_models import get_dataloaders_from
 from seq_models import RNN_LSTM, Model
 from seq_models import hidden_size, n_layers, n_classes
@@ -168,6 +185,7 @@ mse = model.eval(hdout_loader)
 logger.success('='*80)
 logger.success(f'[EVAL] MSE = {mse}')
 logger.success('='*80)
+"""
 # ==============================================================================================
 # end: pytorch modelling
 # ==============================================================================================
@@ -182,12 +200,6 @@ data = data.dropna().filter(['Close'])
 train = data[WIN_SIZE:WIN_SIZE+len(y_train)]
 valid = data[WIN_SIZE+len(y_train):WIN_SIZE+len(y_train)+len(y_valid)]
 hdout = data[WIN_SIZE+len(y_train)+len(y_valid):WIN_SIZE+len(y_train)+len(y_valid)+len(x_hdout)]
-
-# logger.info(f'[SIZE] data: {len(data)}')
-# logger.info(f'[SIZE] train: {len(train)} \tx_train: {x_train.shape}')
-# logger.info(f'[SIZE] valid: {len(valid)} \tx_valid: {x_valid.shape}')
-# logger.info(f'[SIZE] hdout: {len(hdout)} \tx_hdout: {x_hdout.shape}')
-# logger.info(f'[SIZE] train+valid+hdout-WIN_SIZE {len(hdout) + len(valid) + len(train) - WIN_SIZE}')
 
 predictions = model.predict(x_valid)
 predictions = scaler.inverse_transform(predictions)
